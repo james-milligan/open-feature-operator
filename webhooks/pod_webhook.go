@@ -92,6 +92,12 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 		return admission.Allowed("OpenFeature is disabled")
 	}
 
+	if _, ok = pod.GetAnnotations()["openfeature.dev/featureflagconfiguration"]; ok {
+		err = fmt.Errorf("the openfeature.dev/featureflagconfiguration annotation is no longer supported by the operator. " +
+			"from version xyz only the openfeature.dev/flagsourceconfiguration annotation should be used to configure the flag source")
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
 	// Check configuration
 	fcNames := []string{}
 	val, ok = pod.GetAnnotations()["openfeature.dev/flagsourceconfiguration"]
