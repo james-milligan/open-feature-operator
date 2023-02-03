@@ -165,88 +165,15 @@ func (m *PodMutator) injectSidecar(
 	for _, syncProvider := range flagSourceConfig.SyncProviders {
 		switch {
 		case syncProvider.Provider.IsFilepath():
-			// add permissions to pod
-			if err := m.enableClusterRoleBinding(ctx, pod); err != nil {
+			if err := m.handleFilepathProvider(ctx, pod, &sidecar, syncProvider); err != nil {
 				return nil, err
 			}
-			// create config map
-			ns, n := parseAnnotation(syncProvider.Source, pod.Namespace)
-			cm := corev1.ConfigMap{}
-			if err := m.Client.Get(ctx, client.ObjectKey{Name: n, Namespace: ns}, &cm); errors.IsNotFound(err) {
-				err := m.createConfigMap(ctx, ns, n, pod)
-				if err != nil {
-					m.Log.V(1).Info(fmt.Sprintf("failed to create config map %s error: %s", n, err.Error()))
-					return nil, err
-				}
-			}
-
-			// Add owner reference of the pod's owner
-			if !podOwnerIsOwner(pod, cm) {
-				reference := pod.OwnerReferences[0]
-				reference.Controller = utils.FalseVal()
-				cm.OwnerReferences = append(cm.OwnerReferences, reference)
-				err := m.Client.Update(ctx, &cm)
-				if err != nil {
-					m.Log.V(1).Info(fmt.Sprintf("failed to update owner reference for %s error: %s", n, err.Error()))
-				}
-			}
-			// mount configmap
-			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-				Name: n,
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: n,
-						},
-					},
-				},
-			})
-			mountPath := fmt.Sprintf("%s/%s", rootFileSyncMountPath, corev1alpha1.FeatureFlagConfigurationId(ns, n))
-			sidecar.VolumeMounts = append(sidecar.VolumeMounts, corev1.VolumeMount{
-				Name: n,
-				// create a directory mount per featureFlag spec
-				// file mounts will not work
-				MountPath: mountPath,
-			})
-			sidecar.Args = append(
-				sidecar.Args,
-				"--uri",
-				fmt.Sprintf("file:%s/%s",
-					mountPath,
-					corev1alpha1.FeatureFlagConfigurationConfigMapKey(ns, n),
-				),
-			)
-
 		case syncProvider.Provider.IsKubernetes():
-			// add permissions to pod
-			if err := m.enableClusterRoleBinding(ctx, pod); err != nil {
+			if err := m.handleKubernetesProvider(ctx, pod, &sidecar, syncProvider); err != nil {
 				return nil, err
 			}
-			// append args
-			ns, n := parseAnnotation(syncProvider.Source, pod.Namespace)
-			sidecar.Args = append(
-				sidecar.Args,
-				"--uri",
-				fmt.Sprintf(
-					"core.openfeature.dev/%s/%s",
-					ns,
-					n,
-				),
-			)
 		case syncProvider.Provider.IsHttp():
-			// append args
-			sidecar.Args = append(
-				sidecar.Args,
-				"--uri",
-				syncProvider.Source,
-			)
-			if syncProvider.HttpSyncBearerToken != "" {
-				sidecar.Args = append(
-					sidecar.Args,
-					"--bearer-token",
-					syncProvider.HttpSyncBearerToken,
-				)
-			}
+			m.handleHttpProvider(&sidecar, syncProvider)
 		default:
 			return nil, fmt.Errorf("unrecognized sync provider in config: %s", syncProvider.Provider)
 		}
@@ -261,6 +188,93 @@ func (m *PodMutator) injectSidecar(
 	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
 
 	return json.Marshal(pod)
+}
+
+func (m *PodMutator) handleHttpProvider(sidecar *corev1.Container, syncProvider corev1alpha1.SyncProvider) error {
+	// append args
+	sidecar.Args = append(
+		sidecar.Args,
+		"--uri",
+		syncProvider.Source,
+	)
+	if syncProvider.HttpSyncBearerToken != "" {
+		sidecar.Args = append(
+			sidecar.Args,
+			"--bearer-token",
+			syncProvider.HttpSyncBearerToken,
+		)
+	}
+	return nil
+}
+
+func (m *PodMutator) handleKubernetesProvider(ctx context.Context, pod *corev1.Pod, sidecar *corev1.Container, syncProvider corev1alpha1.SyncProvider) error {
+	// add permissions to pod
+	if err := m.enableClusterRoleBinding(ctx, pod); err != nil {
+		return err
+	}
+	// append args
+	ns, n := parseAnnotation(syncProvider.Source, pod.Namespace)
+	sidecar.Args = append(
+		sidecar.Args,
+		"--uri",
+		fmt.Sprintf(
+			"core.openfeature.dev/%s/%s",
+			ns,
+			n,
+		),
+	)
+	return nil
+}
+
+func (m *PodMutator) handleFilepathProvider(ctx context.Context, pod *corev1.Pod, sidecar *corev1.Container, syncProvider corev1alpha1.SyncProvider) error {
+	// create config map
+	ns, n := parseAnnotation(syncProvider.Source, pod.Namespace)
+	cm := corev1.ConfigMap{}
+	if err := m.Client.Get(ctx, client.ObjectKey{Name: n, Namespace: ns}, &cm); errors.IsNotFound(err) {
+		err := m.createConfigMap(ctx, ns, n, pod)
+		if err != nil {
+			m.Log.V(1).Info(fmt.Sprintf("failed to create config map %s error: %s", n, err.Error()))
+			return err
+		}
+	}
+
+	// Add owner reference of the pod's owner
+	if !podOwnerIsOwner(pod, cm) {
+		reference := pod.OwnerReferences[0]
+		reference.Controller = utils.FalseVal()
+		cm.OwnerReferences = append(cm.OwnerReferences, reference)
+		err := m.Client.Update(ctx, &cm)
+		if err != nil {
+			m.Log.V(1).Info(fmt.Sprintf("failed to update owner reference for %s error: %s", n, err.Error()))
+		}
+	}
+	// mount configmap
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: n,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: n,
+				},
+			},
+		},
+	})
+	mountPath := fmt.Sprintf("%s/%s", rootFileSyncMountPath, corev1alpha1.FeatureFlagConfigurationId(ns, n))
+	sidecar.VolumeMounts = append(sidecar.VolumeMounts, corev1.VolumeMount{
+		Name: n,
+		// create a directory mount per featureFlag spec
+		// file mounts will not work
+		MountPath: mountPath,
+	})
+	sidecar.Args = append(
+		sidecar.Args,
+		"--uri",
+		fmt.Sprintf("file:%s/%s",
+			mountPath,
+			corev1alpha1.FeatureFlagConfigurationConfigMapKey(ns, n),
+		),
+	)
+	return nil
 }
 
 // BackfillPermissions recovers the state of the flagd-kubernetes-sync role binding in the event of upgrade
