@@ -98,9 +98,6 @@ func setupMutatePodResources() {
 	fsConfig.Spec.Tag = "latest"
 	fsConfig.Spec.MetricsPort = 8081
 	fsConfig.Spec.SocketPath = "/tmp/flag-source.sock"
-	fsConfig.Spec.SyncProviderArgs = []string{
-		"key3=val3",
-	}
 	err = k8sClient.Create(testCtx, fsConfig)
 	Expect(err).ShouldNot(HaveOccurred())
 }

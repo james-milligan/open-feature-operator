@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,8 +44,8 @@ const (
 	defaultSocketPath                string = ""
 	defaultEvaluator                 string = "json"
 	defaultImage                     string = "ghcr.io/open-feature/flagd"
-	// `INPUT_FLAGD_VERSION` is replaced in the `update-flagd` Makefile target
-	defaultTag             string           = "INPUT_FLAGD_VERSION"
+	// `v0.3.4` is replaced in the `update-flagd` Makefile target
+	defaultTag             string           = "v0.3.4"
 	SyncProviderKubernetes SyncProviderType = "kubernetes"
 	SyncProviderFilepath   SyncProviderType = "filepath"
 	SyncProviderHttp       SyncProviderType = "http"
@@ -73,10 +72,6 @@ type FlagSourceConfigurationSpec struct {
 	// +optional
 	SocketPath string `json:"socketPath"`
 
-	// SyncProviderArgs are string arguments passed to all sync providers, defined as key values separated by =
-	// +optional
-	SyncProviderArgs []string `json:"syncProviderArgs"`
-
 	// Evaluator sets an evaluator, defaults to 'json'
 	// +optional
 	Evaluator string `json:"evaluator"`
@@ -89,21 +84,27 @@ type FlagSourceConfigurationSpec struct {
 	// +optional
 	Tag string `json:"tag"`
 
-	// DefaultSyncProvider defines the default sync provider
+	// SyncProviders define the syncProviders and associated configuration to be applied to the sidecar
 	// +optional
-	DefaultSyncProvider SyncProviderType `json:"defaultSyncProvider"`
+	SyncProviders []SyncProvider `json:"syncProviders"`
+}
+
+type SyncProvider struct {
+	Source   string           `json:"source"`
+	Provider SyncProviderType `json:"provider"`
+	// +optional
+	HttpSyncBearerToken string `json:"httpSyncBearerToken"`
 }
 
 func NewFlagSourceConfigurationSpec() (*FlagSourceConfigurationSpec, error) {
 	fsc := &FlagSourceConfigurationSpec{
-		MetricsPort:         defaultMetricPort,
-		Port:                defaultPort,
-		SocketPath:          defaultSocketPath,
-		SyncProviderArgs:    []string{},
-		Evaluator:           defaultEvaluator,
-		Image:               defaultImage,
-		Tag:                 defaultTag,
-		DefaultSyncProvider: SyncProviderKubernetes,
+		MetricsPort:   defaultMetricPort,
+		Port:          defaultPort,
+		SocketPath:    defaultSocketPath,
+		Evaluator:     defaultEvaluator,
+		Image:         defaultImage,
+		Tag:           defaultTag,
+		SyncProviders: []SyncProvider{},
 	}
 
 	if metricsPort := os.Getenv(fmt.Sprintf("%s_%s", InputConfigurationEnvVarPrefix, SidecarMetricPortEnvVar)); metricsPort != "" {
@@ -138,14 +139,6 @@ func NewFlagSourceConfigurationSpec() (*FlagSourceConfigurationSpec, error) {
 		fsc.Tag = tag
 	}
 
-	if syncProviderArgs := os.Getenv(fmt.Sprintf("%s_%s", InputConfigurationEnvVarPrefix, SidecarProviderArgsEnvVar)); syncProviderArgs != "" {
-		fsc.SyncProviderArgs = strings.Split(syncProviderArgs, ",") // todo: add documentation for this
-	}
-
-	if syncProvider := os.Getenv(fmt.Sprintf("%s_%s", InputConfigurationEnvVarPrefix, SidecarDefaultSyncProviderEnvVar)); syncProvider != "" {
-		fsc.DefaultSyncProvider = SyncProviderType(syncProvider)
-	}
-
 	return fsc, nil
 }
 
@@ -171,11 +164,8 @@ func (fc *FlagSourceConfigurationSpec) Merge(new *FlagSourceConfigurationSpec) {
 	if new.Tag != "" {
 		fc.Tag = new.Tag
 	}
-	if new.SyncProviderArgs != nil && len(new.SyncProviderArgs) > 0 {
-		fc.SyncProviderArgs = append(fc.SyncProviderArgs, new.SyncProviderArgs...)
-	}
-	if new.DefaultSyncProvider != "" {
-		fc.DefaultSyncProvider = new.DefaultSyncProvider
+	if len(new.SyncProviders) != 0 {
+		fc.SyncProviders = append(fc.SyncProviders, new.SyncProviders...)
 	}
 }
 

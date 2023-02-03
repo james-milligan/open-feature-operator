@@ -607,9 +607,6 @@ spec:
             description: FlagSourceConfigurationSpec defines the desired state of
               FlagSourceConfiguration
             properties:
-              defaultSyncProvider:
-                description: DefaultSyncProvider defines the default sync provider
-                type: string
               evaluator:
                 description: Evaluator sets an evaluator, defaults to 'json'
                 type: string
@@ -629,11 +626,21 @@ spec:
               socketPath:
                 description: SocketPath defines the unix socket path to listen on
                 type: string
-              syncProviderArgs:
-                description: SyncProviderArgs are string arguments passed to all sync
-                  providers, defined as key values separated by =
+              syncProviders:
+                description: SyncProviders define the syncProviders and associated
+                  configuration to be applied to the sidecar
                 items:
-                  type: string
+                  properties:
+                    httpSyncBearerToken:
+                      type: string
+                    provider:
+                      type: string
+                    source:
+                      type: string
+                  required:
+                  - provider
+                  - source
+                  type: object
                 type: array
               tag:
                 description: Tag to be appended to the sidecar image, defaults to
@@ -1045,7 +1052,7 @@ spec:
           value: '{{ .Values.sidecarConfiguration.defaultSyncProvider }}'
         image: '{{ .Values.controllerManager.manager.image.repository }}:{{ .Values.controllerManager.manager.image.tag
           }}'
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz
