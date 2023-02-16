@@ -22,8 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/api/apps/v1beta1"
-	v1 "k8s.io/api/core/v1"
+	appsV1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -36,8 +35,9 @@ import (
 )
 
 const (
-	OpenFeatureAnnotationPath         = "metadata.annotations.openfeature.dev/openfeature.dev"
+	OpenFeatureAnnotationPath         = "spec.template.metadata.annotations.openfeature.dev/openfeature.dev"
 	FlagSourceConfigurationAnnotation = "flagsourceconfiguration"
+	OpenFeatureAnnotationRoot         = "openfeature.dev"
 )
 
 // FlagSourceConfigurationReconciler reconciles a FlagSourceConfiguration object
@@ -50,20 +50,18 @@ type FlagSourceConfigurationReconciler struct {
 
 //+kubebuilder:rbac:groups=core.openfeature.dev,resources=flagsourceconfigurations,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core.openfeature.dev,resources=flagsourceconfigurations/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core.openfeature.dev,resources=flagsourceconfigurations/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the FlagSourceConfiguration object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
+
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.13.0/pkg/reconcile
 func (r *FlagSourceConfigurationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Log = log.FromContext(ctx)
 
+	// Fetch the FlagSourceConfiguration from the cache
 	fsConfig := &corev1alpha1.FlagSourceConfiguration{}
 	if err := r.Client.Get(ctx, req.NamespacedName, fsConfig); err != nil {
 		if errors.IsNotFound(err) {
@@ -76,7 +74,9 @@ func (r *FlagSourceConfigurationReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	// Object has been updated, so, we can restart any deployments that are using this annotation
-	deployList := &v1beta1.DeploymentList{}
+	// => 	we know there has been an update because we are using the GenerationChangedPredicate filter
+	// 		and our resource exists within the cluster
+	deployList := &appsV1.DeploymentList{}
 	if err := r.Client.List(ctx, deployList, client.MatchingFields{
 		fmt.Sprintf("%s/%s", OpenFeatureAnnotationPath, FlagSourceConfigurationAnnotation): "true",
 	}); err != nil {
@@ -84,13 +84,18 @@ func (r *FlagSourceConfigurationReconciler) Reconcile(ctx context.Context, req c
 		return r.finishReconcile(err, false)
 	}
 
+	// Loop through all deployments containing the openfeature.dev/featureflagconfiguration annotation
+	// and trigger a restart for any which have our resource listed as a configuration
 	for _, deployment := range deployList.Items {
-		annotations := deployment.GetAnnotations()
-		annotation, ok := annotations[FlagSourceConfigurationAnnotation]
+		fmt.Println("handling deployment ", deployment.Name)
+		annotations := deployment.Spec.Template.Annotations
+		fmt.Println(annotations)
+		annotation, ok := annotations[fmt.Sprintf("%s/%s", OpenFeatureAnnotationRoot, FlagSourceConfigurationAnnotation)]
 		if !ok {
 			continue
 		}
 		if isUsingConfiguration(fsConfig.Namespace, fsConfig.Name, deployment.Namespace, annotation) {
+			fmt.Println("found to be using annotation")
 			deployment.Spec.Template.ObjectMeta.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339)
 			if err := r.Client.Update(ctx, &deployment); err != nil {
 				r.Log.V(1).Error(err, fmt.Sprintf("Failed to update Deployment: %s", err.Error()))
@@ -103,9 +108,11 @@ func (r *FlagSourceConfigurationReconciler) Reconcile(ctx context.Context, req c
 }
 
 func isUsingConfiguration(namespace string, name string, deploymentNamespace string, annotation string) bool {
-	s := strings.Split(annotation, ",")
+	s := strings.Split(annotation, ",") // parse annotation list
 	for _, target := range s {
+		fmt.Println(target)
 		ss := strings.Split(strings.TrimSpace(target), "/")
+		fmt.Println(ss)
 		if len(ss) != 2 {
 			target = fmt.Sprintf("%s/%s", deploymentNamespace, target)
 		}
@@ -125,22 +132,18 @@ func (r *FlagSourceConfigurationReconciler) finishReconcile(err error, requeueIm
 		r.Log.Error(err, "Finished Reconciling "+crdName+" with error: %w")
 		return ctrl.Result{Requeue: true, RequeueAfter: interval}, err
 	}
-	interval := reconcileSuccessInterval
-	if requeueImmediate {
-		interval = 0
-	}
 	r.Log.Info("Finished Reconciling " + crdName)
-	return ctrl.Result{Requeue: true, RequeueAfter: interval}, nil
+	return ctrl.Result{Requeue: false}, nil
 }
 
-func FlagSourceConfigurationAnnotationFilter(o client.Object) []string {
-	pod := o.(*v1.Pod)
-	if pod.ObjectMeta.Annotations == nil {
+func FlagSourceConfigurationIndex(o client.Object) []string {
+	deployment := o.(*appsV1.Deployment)
+	if deployment.Spec.Template.ObjectMeta.Annotations == nil {
 		return []string{
 			"false",
 		}
 	}
-	if _, ok := pod.ObjectMeta.Annotations[fmt.Sprintf("openfeature.dev/%s", FlagSourceConfigurationAnnotation)]; ok {
+	if _, ok := deployment.Spec.Template.ObjectMeta.Annotations[fmt.Sprintf("openfeature.dev/%s", FlagSourceConfigurationAnnotation)]; ok {
 		return []string{
 			"true",
 		}

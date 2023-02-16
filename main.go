@@ -27,7 +27,14 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	corev1alpha1 "github.com/open-feature/open-feature-operator/apis/core/v1alpha1"
+	corev1alpha2 "github.com/open-feature/open-feature-operator/apis/core/v1alpha2"
+	corev1alpha3 "github.com/open-feature/open-feature-operator/apis/core/v1alpha3"
+	"github.com/open-feature/open-feature-operator/controllers"
+	corecontrollers "github.com/open-feature/open-feature-operator/controllers/core"
+	webhooks "github.com/open-feature/open-feature-operator/webhooks"
 	"go.uber.org/zap/zapcore"
+	appsV1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,13 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
-
-	corev1alpha1 "github.com/open-feature/open-feature-operator/apis/core/v1alpha1"
-	corev1alpha2 "github.com/open-feature/open-feature-operator/apis/core/v1alpha2"
-	corev1alpha3 "github.com/open-feature/open-feature-operator/apis/core/v1alpha3"
-	"github.com/open-feature/open-feature-operator/controllers"
-	corecontrollers "github.com/open-feature/open-feature-operator/controllers/core"
-	webhooks "github.com/open-feature/open-feature-operator/webhooks"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -195,15 +195,15 @@ func main() {
 
 	if err := mgr.GetFieldIndexer().IndexField(
 		context.Background(),
-		&corev1.Pod{},
+		&appsV1.Deployment{},
 		fmt.Sprintf("%s/%s", controllers.OpenFeatureAnnotationPath, controllers.FlagSourceConfigurationAnnotation),
-		webhooks.OpenFeatureEnabledAnnotationIndex,
+		controllers.FlagSourceConfigurationIndex,
 	); err != nil {
 		setupLog.Error(
 			err,
 			"unable to create indexer",
 			"webhook",
-			fmt.Sprintf("%s/%s", webhooks.OpenFeatureAnnotationPath, webhooks.AllowKubernetesSyncAnnotation),
+			fmt.Sprintf("%s/%s", webhooks.OpenFeatureAnnotationPath, webhooks.FlagSourceConfigurationAnnotation),
 		)
 		os.Exit(1)
 	}
