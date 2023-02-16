@@ -193,6 +193,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&corev1.Pod{},
+		fmt.Sprintf("%s/%s", controllers.OpenFeatureAnnotationPath, controllers.FlagSourceConfigurationAnnotation),
+		webhooks.OpenFeatureEnabledAnnotationIndex,
+	); err != nil {
+		setupLog.Error(
+			err,
+			"unable to create indexer",
+			"webhook",
+			fmt.Sprintf("%s/%s", webhooks.OpenFeatureAnnotationPath, webhooks.AllowKubernetesSyncAnnotation),
+		)
+		os.Exit(1)
+	}
+
 	if err = (&controllers.FeatureFlagConfigurationReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
